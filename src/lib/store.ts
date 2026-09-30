@@ -8,16 +8,23 @@ import {
   type Connection,
   type XYPosition,
 } from '@xyflow/react';
-import { validateJSM } from '@/lib/jsm/validate';
-import { parseJSM, type StateNode, type ParseProgressCallback } from '@/lib/jsm/parse';
+import { validateJSMText, type JsmIssue } from '@/lib/jsm/validate';
+import {
+  parseJSM,
+  buildEventEdges,
+  isEventEdge,
+  type StateNode,
+  type ParseProgressCallback,
+} from '@/lib/jsm/parse';
 import { applyLayout, type LayoutType } from '@/lib/jsm/layout';
-import { serializeToJSM } from '@/lib/jsm/serialize';
+import { serializeToJSM, syncEventActions } from '@/lib/jsm/serialize';
 import { useLibraryStore, type Positions, type PersistedEdgeData } from '@/lib/libraryStore';
 import type { EntryAction } from '@/lib/jsm/schema';
 
 interface StoreState {
   input: string;
   error: string | null;
+  issues: JsmIssue[];
   isLoading: boolean;
   parseProgress: { currentIndex: number; totalNodes: number; currentNodeId: string; previousNodeId?: string } | null;
   nodes: StateNode[];
@@ -55,7 +62,7 @@ interface StoreState {
 
 type ParseResult =
   | { ok: true; nodes: StateNode[]; edges: Edge[]; startName: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; issues: JsmIssue[] };
 
 function tryParse(
   raw: string,
@@ -63,14 +70,8 @@ function tryParse(
   layoutType: LayoutType,
   onProgress?: ParseProgressCallback,
 ): ParseResult {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { ok: false, error: 'Invalid JSON — please check your input.' };
-  }
-  const result = validateJSM(parsed);
-  if (!result.success) return { ok: false, error: result.error };
+  const result = validateJSMText(raw);
+  if (!result.success) return { ok: false, error: result.error, issues: result.issues };
 
   const { nodes, edges } = parseJSM(result.data, onProgress);
   const laidOut = applyLayout(nodes, edges, layoutType);
@@ -126,18 +127,19 @@ let cpTimer: ReturnType<typeof setTimeout> | null = null;
 
 export const useStore = create<StoreState>((set, get) => {
   function applyCanvasEdit(
-    newNodes: StateNode[],
+    editedNodes: StateNode[],
     newEdges: Edge[],
     newStart: string,
   ) {
     if (renderTimer) clearTimeout(renderTimer);
+    const newNodes = syncEventActions(editedNodes, newEdges);
     const currentCPs = get().edgeControlPoints;
     const newInput = JSON.stringify(
       serializeToJSM(newNodes, newEdges, newStart),
       null,
       2,
     );
-    set({ nodes: newNodes, edges: newEdges, start: newStart, input: newInput, error: null });
+    set({ nodes: newNodes, edges: newEdges, start: newStart, input: newInput, error: null, issues: [] });
 
     const lib = useLibraryStore.getState();
     const edgeData = buildEdgeData(newEdges, currentCPs);
@@ -153,6 +155,7 @@ export const useStore = create<StoreState>((set, get) => {
   return {
     input: '',
     error: null,
+    issues: [],
     isLoading: false,
     parseProgress: null,
     nodes: [],
@@ -178,12 +181,17 @@ export const useStore = create<StoreState>((set, get) => {
         );
 
         if (!result.ok) {
-          set({ error: input.trim() ? result.error : null, isLoading: false, parseProgress: null });
+          set({
+            error: input.trim() ? result.error : null,
+            issues: input.trim() ? result.issues : [],
+            isLoading: false,
+            parseProgress: null,
+          });
           if (lib.activeId) lib.updateEntry(lib.activeId, { raw: input });
           return;
         }
 
-        set({ nodes: result.nodes, edges: result.edges, start: result.startName, error: null, isLoading: false, parseProgress: null });
+        set({ nodes: result.nodes, edges: result.edges, start: result.startName, error: null, issues: [], isLoading: false, parseProgress: null });
         const positions = extractPositions(result.nodes);
 
         if (lib.activeId) {
@@ -210,7 +218,7 @@ export const useStore = create<StoreState>((set, get) => {
         (progress) => set({ parseProgress: progress }),
       );
       if (!result.ok) {
-        set({ input: entry.raw, nodes: [], edges: [], start: '', error: result.error, edgeControlPoints: {}, layoutAlgorithm: layoutAlgo, isLoading: false, parseProgress: null });
+        set({ input: entry.raw, nodes: [], edges: [], start: '', error: result.error, issues: result.issues, edgeControlPoints: {}, layoutAlgorithm: layoutAlgo, isLoading: false, parseProgress: null });
       } else {
         const storedEdgeData = entry.edgeData ?? {};
         const edgeControlPoints: Record<string, XYPosition> = {};
@@ -232,6 +240,7 @@ export const useStore = create<StoreState>((set, get) => {
           edges: restoredEdges,
           start: result.startName,
           error: null,
+          issues: [],
           edgeControlPoints,
           layoutAlgorithm: layoutAlgo,
           isLoading: false,
@@ -256,7 +265,7 @@ export const useStore = create<StoreState>((set, get) => {
       if (renderTimer) clearTimeout(renderTimer);
       if (positionTimer) clearTimeout(positionTimer);
       if (cpTimer) clearTimeout(cpTimer);
-      set({ input: '', nodes: [], edges: [], start: '', error: null, selectedNodeId: null, selectedEdgeId: null, edgeControlPoints: {}, layoutAlgorithm: 'hierarchical' });
+      set({ input: '', nodes: [], edges: [], start: '', error: null, issues: [], selectedNodeId: null, selectedEdgeId: null, edgeControlPoints: {}, layoutAlgorithm: 'hierarchical' });
       useLibraryStore.getState().setActive(null);
     },
 
@@ -345,7 +354,13 @@ export const useStore = create<StoreState>((set, get) => {
           ? ({ ...n, data: { ...n.data, entryActions: actions } } as StateNode)
           : n,
       );
-      applyCanvasEdit(newNodes, edges, start);
+      // Event edges are derived from entry actions, so rebuild this node's event edges
+      const allNodeIds = new Set(newNodes.map(n => n.id));
+      const newEdges = [
+        ...edges.filter(e => !(e.source === nodeId && isEventEdge(e))),
+        ...buildEventEdges(nodeId, actions, allNodeIds),
+      ];
+      applyCanvasEdit(newNodes, newEdges, start);
     },
 
     connectNodes: (connection) => {
@@ -368,6 +383,9 @@ export const useStore = create<StoreState>((set, get) => {
 
     updateEdgeLabel: (edgeId, label) => {
       const { nodes, edges, start } = get();
+      // An event transition must keep a non-empty event name
+      const target = edges.find(e => e.id === edgeId);
+      if (target && isEventEdge(target) && !label.trim()) return;
       const newEdges = edges.map(e => (e.id === edgeId ? { ...e, label } : e));
       applyCanvasEdit(nodes, newEdges, start);
     },
