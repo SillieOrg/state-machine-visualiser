@@ -17,7 +17,7 @@ class DagreLayout implements LayoutAlgorithm {
   compute(nodes: Node[], edges: Edge[]): Node[] {
     const g = new graphlib.Graph();
     g.setDefaultEdgeLabel(() => ({}));
-    g.setGraph({ rankdir: 'TB', ranksep: 80, nodesep: 60 });
+    g.setGraph({ rankdir: 'TB', ranksep: 120, nodesep: 60 });
 
     nodes.forEach(node => {
       g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });

@@ -5,12 +5,16 @@ import {
   EdgeLabelRenderer,
   getBezierPath,
   useEdges,
+  useInternalNode,
   useReactFlow,
   type EdgeProps,
   type Edge,
+  type InternalNode,
+  type Position,
 } from '@xyflow/react';
 import { useStore } from '@/lib/store';
 import type { TransitionEdgeData } from '@/lib/jsm/parse';
+import { getLabelT, getSidePoint, pickAutoSides, pointOnCubicPath, type Rect } from '@/lib/edgeAnchors';
 
 export type EditableEdge = Edge;
 
@@ -27,16 +31,37 @@ function getOrthogonalPath(
   return { path, midX };
 }
 
+function getNodeRect(node: InternalNode | undefined): Rect | null {
+  const width = node?.measured.width;
+  const height = node?.measured.height;
+  if (!node || !width || !height) return null;
+  const { x, y } = node.internals.positionAbsolute;
+  return { x, y, width, height };
+}
+
+/** Point where an edge attaches to `side` of a node, matching React Flow's handle positioning. */
+function getAnchorPoint(node: InternalNode, rect: Rect, side: Position, handleId: string): { x: number; y: number } {
+  const bounds = node.internals.handleBounds;
+  const handle = [...(bounds?.source ?? []), ...(bounds?.target ?? [])].find(h => h.id === handleId);
+  if (!handle) return getSidePoint(rect, side);
+  return getSidePoint(
+    { x: rect.x + handle.x, y: rect.y + handle.y, width: handle.width, height: handle.height },
+    side,
+  );
+}
+
 export function EditableEdge({
   id,
   source,
   target,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  sourcePosition,
-  targetPosition,
+  sourceX: rfSourceX,
+  sourceY: rfSourceY,
+  targetX: rfTargetX,
+  targetY: rfTargetY,
+  sourcePosition: rfSourcePosition,
+  targetPosition: rfTargetPosition,
+  sourceHandleId,
+  targetHandleId,
   label,
   markerEnd,
   style,
@@ -58,6 +83,30 @@ export function EditableEdge({
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const { screenToFlowPosition } = useReactFlow();
+  const sourceNode = useInternalNode(source);
+  const targetNode = useInternalNode(target);
+
+  // Edges without an explicit handle would otherwise attach to the first handle
+  // (the top), so pick the sides facing each other based on node positions.
+  let sourceX = rfSourceX;
+  let sourceY = rfSourceY;
+  let targetX = rfTargetX;
+  let targetY = rfTargetY;
+  let sourcePosition = rfSourcePosition;
+  let targetPosition = rfTargetPosition;
+  const sourceRect = getNodeRect(sourceNode);
+  const targetRect = getNodeRect(targetNode);
+  if (sourceNode && targetNode && sourceRect && targetRect && source !== target) {
+    const sides = pickAutoSides(sourceRect, targetRect, layoutAlgorithm === 'grid' ? 'horizontal' : 'vertical');
+    if (!sourceHandleId) {
+      sourcePosition = sides.source;
+      ({ x: sourceX, y: sourceY } = getAnchorPoint(sourceNode, sourceRect, sides.source, `${sides.source}-s`));
+    }
+    if (!targetHandleId) {
+      targetPosition = sides.target;
+      ({ x: targetX, y: targetY } = getAnchorPoint(targetNode, targetRect, sides.target, `${sides.target}-t`));
+    }
+  }
 
   const isPending = pendingLabelEdgeId === id;
 
@@ -122,6 +171,10 @@ export function EditableEdge({
       targetY,
       targetPosition,
     });
+    const fanOut = allEdges.filter(e => e.source === source && e.target !== source).length;
+    const fanIn = allEdges.filter(e => e.target === target && e.source !== target).length;
+    const labelPoint = pointOnCubicPath(edgePath, getLabelT(fanOut, fanIn));
+    if (labelPoint) ({ x: labelX, y: labelY } = labelPoint);
     cpX = labelX;
     cpY = labelY;
   }
