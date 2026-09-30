@@ -8,6 +8,28 @@ export type StateNodeData = {
 
 export type StateNode = Node<StateNodeData, 'stateNode'>;
 
+export type TransitionEdgeData = {
+  /** 'exitCheck' edges come from `exitChecks`; 'event' edges come from event entry actions with a `goTo` */
+  kind: 'exitCheck' | 'event';
+  /** The `goTo` text as written in the JSM (may be relative) */
+  goTo: string;
+  /** The node id `goTo` resolved to when parsed */
+  resolvedTarget: string;
+  /** Index of the originating entry action (event edges only) */
+  actionIndex?: number;
+  /** JSON schema for the event payload (event edges only) */
+  schema?: string;
+};
+
+export function getTransitionData(edge: Edge): TransitionEdgeData | undefined {
+  const data = edge.data as Partial<TransitionEdgeData> | undefined;
+  return data?.kind ? (data as TransitionEdgeData) : undefined;
+}
+
+export function isEventEdge(edge: Edge): boolean {
+  return getTransitionData(edge)?.kind === 'event';
+}
+
 export type ParseProgressCallback = (progress: {
   currentIndex: number;
   totalNodes: number;
@@ -64,47 +86,60 @@ export function parseJSM(
     previousNodeId = id;
   }
 
-  const edges: Edge[] = flat.flatMap(({ id, state }) =>
-    (state.exitChecks ?? []).map((check, i) => {
-      let target = check.goTo;
-      
-      // Resolve relative targets
-      if (!allNodeIds.has(target)) {
-        // Try: source.target (sibling of source or child of source)
-        if (allNodeIds.has(`${id}.${target}`)) {
-          target = `${id}.${target}`;
-        } 
-        // Try: parent.target (sibling of source's parent)
-        else if (id.includes('.')) {
-          const sourcePrefix = id.substring(0, id.lastIndexOf('.'));
-          const prefixedTarget = `${sourcePrefix}.${target}`;
-          if (allNodeIds.has(prefixedTarget)) {
-            target = prefixedTarget;
-          }
-          // Fallback: find any node that ends with .target
-          else {
-            const match = Array.from(allNodeIds).find(nodeId => nodeId.endsWith(`.${target}`));
-            if (match) {
-              target = match;
-            }
-          }
-        } else {
-          // At root level - try to find any node with this name as suffix
-          const match = Array.from(allNodeIds).find(nodeId => nodeId.endsWith(`.${target}`) || nodeId === target);
-          if (match) {
-            target = match;
-          }
-        }
-      }
-      
+  const edges: Edge[] = flat.flatMap(({ id, state }) => [
+    ...(state.exitChecks ?? []).map((check, i): Edge => {
+      const target = resolveTarget(id, check.goTo, allNodeIds);
       return {
         id: `${id}->${check.goTo}-${i}`,
         source: id,
         target,
-        label: check.check,
+        label: check.check ?? '',
+        data: { kind: 'exitCheck', goTo: check.goTo, resolvedTarget: target } satisfies TransitionEdgeData,
       };
     }),
-  );
+    ...buildEventEdges(id, state.entryActions ?? [], allNodeIds),
+  ]);
 
   return { nodes, edges };
+}
+
+/** Resolves a (possibly relative) `goTo` reference from `sourceId` to a node id. */
+export function resolveTarget(sourceId: string, goTo: string, allNodeIds: Set<string>): string {
+  if (allNodeIds.has(goTo)) return goTo;
+  // Try: source.target (child of source)
+  if (allNodeIds.has(`${sourceId}.${goTo}`)) return `${sourceId}.${goTo}`;
+  if (sourceId.includes('.')) {
+    // Try: parent.target (sibling of source)
+    const sourcePrefix = sourceId.substring(0, sourceId.lastIndexOf('.'));
+    const prefixedTarget = `${sourcePrefix}.${goTo}`;
+    if (allNodeIds.has(prefixedTarget)) return prefixedTarget;
+  }
+  // Fallback: find any node that ends with .target
+  const match = Array.from(allNodeIds).find(nodeId => nodeId.endsWith(`.${goTo}`));
+  return match ?? goTo;
+}
+
+/** Builds the edges for a node's event entry actions that have a `goTo`. */
+export function buildEventEdges(
+  sourceId: string,
+  entryActions: EntryAction[],
+  allNodeIds: Set<string>,
+): Edge[] {
+  return entryActions.flatMap((action, i): Edge[] => {
+    if (action.event === undefined || !action.goTo) return [];
+    const target = resolveTarget(sourceId, action.goTo, allNodeIds);
+    return [{
+      id: `${sourceId}~event-${i}`,
+      source: sourceId,
+      target,
+      label: action.event,
+      data: {
+        kind: 'event',
+        goTo: action.goTo,
+        resolvedTarget: target,
+        actionIndex: i,
+        ...(action.schema !== undefined ? { schema: action.schema } : {}),
+      } satisfies TransitionEdgeData,
+    }];
+  });
 }

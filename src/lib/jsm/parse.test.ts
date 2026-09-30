@@ -60,3 +60,34 @@ describe('parseJSM', () => {
     nodes.forEach(n => expect(n.type).toBe('stateNode'));
   });
 });
+
+describe('parseJSM events and optional checks', () => {
+  const jsm = {
+    entryStateName: 'Pending',
+    states: [
+      {
+        name: 'Pending',
+        children: [
+          { name: 'Landing Page', entryActions: [{ event: 'Page Submitted', schema: '/f.json', goTo: 'Quote' }] },
+          { name: 'Quote', exitChecks: [{ goTo: 'Landing Page' }] },
+        ],
+      },
+    ],
+  };
+
+  it('creates event edges from event entry actions with goTo', () => {
+    const { edges } = parseJSM(jsm);
+    const eventEdge = edges.find(e => e.source === 'Pending.Landing Page');
+    expect(eventEdge).toMatchObject({
+      target: 'Pending.Quote',
+      label: 'Page Submitted',
+      data: { kind: 'event', goTo: 'Quote', actionIndex: 0, schema: '/f.json' },
+    });
+  });
+
+  it('uses an empty label for exit checks without a check', () => {
+    const { edges } = parseJSM(jsm);
+    const exitEdge = edges.find(e => e.source === 'Pending.Quote');
+    expect(exitEdge).toMatchObject({ target: 'Pending.Landing Page', label: '', data: { kind: 'exitCheck' } });
+  });
+});

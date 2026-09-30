@@ -47,15 +47,15 @@ A Next.js web app for visualising **JSON State Machine (JSM)** files as interact
 Key concepts:
 - **`entryStateName`** — name of the initial state (also accepts legacy `start` field for backward compatibility)
 - **`states`** — flat or nested list of state nodes
-- **`entryActions`** — conditional logic run on entering a state (`check` + `action`)
-- **`exitChecks`** — conditional transitions out of a state (`check` + `goTo`, also accepts legacy `goto`)
+- **`entryActions`** — run on entering a state; either an action (`action`, optional `check`) or an event (`event`, optional `schema`/`goTo`/`check`). Events with `goTo` become dashed event edges
+- **`exitChecks`** — transitions out of a state (optional `check` + `goTo`, also accepts legacy `goto`)
 - **`goTo`** — dot-notation reference to a target state, e.g. `"Complete.Success"` for a child state
 - **`children`** — nested child states (rendered as a sub-group in the flowchart)
 
 ### Backward Compatibility
 Both old and new field names are accepted during parsing and automatically normalized:
 - `"start"` → `"entryStateName"`
-- `"goto"` → `"goTo"` in exitChecks
+- `"goto"` → `"goTo"` in exitChecks and entryActions
 
 ## Architecture notes
 

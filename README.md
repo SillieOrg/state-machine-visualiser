@@ -49,15 +49,15 @@ Open [http://localhost:3000](http://localhost:3000).
 ```
 
 - `entryStateName` — name of the initial state (also accepts legacy `start` field)
-- `entryActions` — conditional logic run on entering a state
-- `exitChecks` — conditional transitions; `goTo` uses dot-notation for child states (`"Complete.Success"`, also accepts legacy `goto`)
+- `entryActions` — run on entering a state; each is either an action (`action`, optional `check`) or an event (`event`, optional `schema`, `goTo`, `check`). Events with a `goTo` are drawn as dashed ⚡ transitions
+- `exitChecks` — transitions; `check` is optional (no check = always, shown as "always"); `goTo` uses dot-notation for child states (`"Complete.Success"`, also accepts legacy `goto`)
 - `children` — nested child states, rendered as a sub-group
 
 ### Backward Compatibility
 
 The app accepts both old and new field names:
 - `"start"` is automatically converted to `"entryStateName"`
-- `"goto"` in exitChecks is automatically converted to `"goTo"`
+- `"goto"` in exitChecks and entryActions is automatically converted to `"goTo"`
 - Internally, all JSM files are normalized and saved with the canonical field names
 
 ## Sharing

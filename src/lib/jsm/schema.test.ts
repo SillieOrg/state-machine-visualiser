@@ -57,3 +57,33 @@ describe('JSMSchema', () => {
     expect(JSMSchema.safeParse({ entryStateName: 'A' }).success).toBe(false);
   });
 });
+
+describe('EntryActionSchema', () => {
+  it('accepts an action without a check', () => {
+    expect(StateSchema.safeParse({ name: 'A', entryActions: [{ action: 'Do it' }] }).success).toBe(true);
+  });
+
+  it('accepts an event with schema and goTo', () => {
+    const result = StateSchema.safeParse({
+      name: 'A',
+      entryActions: [{ event: 'Page Submitted', schema: '/forms/a.json', goTo: 'B' }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects an entry action with neither action nor event', () => {
+    expect(StateSchema.safeParse({ name: 'A', entryActions: [{ check: 'x' }] }).success).toBe(false);
+  });
+
+  it('rejects an entry action with both action and event', () => {
+    expect(
+      StateSchema.safeParse({ name: 'A', entryActions: [{ action: 'a', event: 'e' }] }).success,
+    ).toBe(false);
+  });
+});
+
+describe('ExitCheckSchema', () => {
+  it('accepts an exit check without a check', () => {
+    expect(StateSchema.safeParse({ name: 'A', exitChecks: [{ goTo: 'B' }] }).success).toBe(true);
+  });
+});

@@ -10,6 +10,7 @@ import {
   type Edge,
 } from '@xyflow/react';
 import { useStore } from '@/lib/store';
+import type { TransitionEdgeData } from '@/lib/jsm/parse';
 
 export type EditableEdge = Edge;
 
@@ -39,7 +40,12 @@ export function EditableEdge({
   label,
   markerEnd,
   style,
+  data,
 }: EdgeProps) {
+  const isEvent = (data as Partial<TransitionEdgeData> | undefined)?.kind === 'event';
+  const edgeStyle = isEvent
+    ? { ...style, stroke: '#8b5cf6', strokeDasharray: '6 4' }
+    : style;
   const updateEdgeLabel = useStore(s => s.updateEdgeLabel);
   const clearPendingLabel = useStore(s => s.clearPendingLabel);
   const pendingLabelEdgeId = useStore(s => s.pendingLabelEdgeId);
@@ -157,7 +163,7 @@ export function EditableEdge({
 
   return (
     <>
-      <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />
+      <BaseEdge path={edgePath} markerEnd={markerEnd} style={edgeStyle} />
       {showDragHandle && (
         <circle
           cx={cpX}
@@ -188,14 +194,20 @@ export function EditableEdge({
                 if (e.key === 'Escape') setEditing(false);
               }}
               className="text-xs text-zinc-800 border border-blue-400 rounded px-1.5 py-0.5 bg-white shadow-sm outline-none w-36"
-              placeholder="condition…"
+              placeholder={isEvent ? 'event…' : 'condition…'}
             />
           ) : (
             <button
               onClick={startEditing}
-              className="text-xs bg-white border border-zinc-200 rounded px-1.5 py-0.5 text-zinc-800 hover:border-blue-400 shadow-sm transition-colors max-w-[160px] truncate"
+              className={`text-xs bg-white border rounded px-1.5 py-0.5 shadow-sm transition-colors max-w-[160px] truncate ${
+                isEvent
+                  ? 'border-violet-300 text-violet-700 hover:border-violet-500'
+                  : 'border-zinc-200 text-zinc-800 hover:border-blue-400'
+              }`}
+              title={isEvent ? `Event: ${String(label ?? '')}` : label ? `Check: ${String(label)}` : 'No check — always transitions'}
             >
-              {label ? String(label) : <span className="text-zinc-300 italic">condition</span>}
+              {isEvent && <span aria-hidden>⚡ </span>}
+              {label ? String(label) : <span className="text-zinc-400 italic">always</span>}
             </button>
           )}
         </div>

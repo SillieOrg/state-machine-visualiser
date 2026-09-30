@@ -90,3 +90,60 @@ describe('serializeToJSM', () => {
     expect(result).toEqual(original);
   });
 });
+
+describe('serializeToJSM with events and optional checks', () => {
+  const original = {
+    entryStateName: 'Pending',
+    states: [
+      {
+        name: 'Pending',
+        exitChecks: [{ check: 'Is State Pending', goTo: 'Landing Page' }],
+        children: [
+          {
+            name: 'Landing Page',
+            entryActions: [
+              { action: 'Output Landing Message' },
+              { event: 'Page Submitted', schema: '/forms/Landing.json', goTo: 'Quote' },
+            ],
+          },
+          {
+            name: 'Quote',
+            exitChecks: [{ check: 'Is Declined', goTo: 'Declined' }, { goTo: 'Landing Page' }],
+          },
+          { name: 'Declined' },
+        ],
+      },
+    ],
+  };
+
+  it('round-trips events, relative goTos and check-less exit checks', async () => {
+    const { parseJSM } = await import('./parse');
+    const { nodes, edges } = parseJSM(original);
+    expect(serializeToJSM(nodes, edges, 'Pending')).toEqual(original);
+  });
+
+  it('writes a changed event edge target back into the entry action', async () => {
+    const { parseJSM } = await import('./parse');
+    const { nodes, edges } = parseJSM(original);
+    const moved = edges.map(e =>
+      e.id === 'Pending.Landing Page~event-1' ? { ...e, target: 'Pending.Declined' } : e,
+    );
+    const result = serializeToJSM(nodes, moved, 'Pending');
+    expect(result.states[0].children![0].entryActions![1]).toEqual({
+      event: 'Page Submitted',
+      schema: '/forms/Landing.json',
+      goTo: 'Pending.Declined',
+    });
+  });
+
+  it('drops goTo when an event edge is deleted', async () => {
+    const { parseJSM } = await import('./parse');
+    const { nodes, edges } = parseJSM(original);
+    const remaining = edges.filter(e => e.id !== 'Pending.Landing Page~event-1');
+    const result = serializeToJSM(nodes, remaining, 'Pending');
+    expect(result.states[0].children![0].entryActions![1]).toEqual({
+      event: 'Page Submitted',
+      schema: '/forms/Landing.json',
+    });
+  });
+});

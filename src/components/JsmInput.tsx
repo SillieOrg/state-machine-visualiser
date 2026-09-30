@@ -1,5 +1,7 @@
 'use client';
+import { useRef } from 'react';
 import { useStore } from '@/lib/store';
+import type { JsmIssue } from '@/lib/jsm/validate';
 import { useLibraryStore } from '@/lib/libraryStore';
 import { ShareButton } from '@/components/ShareButton';
 import { exportJSM } from '@/lib/jsm/export';
@@ -13,6 +15,8 @@ interface JsmInputProps {
 export function JsmInput({ onToggleSidebar, onToggleFullscreen, fullscreenMode }: JsmInputProps) {
   const input = useStore(s => s.input);
   const error = useStore(s => s.error);
+  const issues = useStore(s => s.issues);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const setInput = useStore(s => s.setInput);
   const resetLayout = useStore(s => s.resetLayout);
 
@@ -22,6 +26,16 @@ export function JsmInput({ onToggleSidebar, onToggleFullscreen, fullscreenMode }
   // Hydrate on mount
   if (!isHydrated && typeof window !== 'undefined') {
     useLibraryStore.persist.rehydrate();
+  }
+
+  function highlightIssue(issue: JsmIssue) {
+    const textarea = textareaRef.current;
+    if (!textarea || issue.start === undefined) return;
+    textarea.focus();
+    textarea.setSelectionRange(issue.start, issue.end ?? issue.start);
+    const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight) || 16;
+    const line = issue.line ?? 1;
+    textarea.scrollTop = Math.max(0, (line - 1) * lineHeight - textarea.clientHeight / 3);
   }
 
   return (
@@ -74,7 +88,9 @@ export function JsmInput({ onToggleSidebar, onToggleFullscreen, fullscreenMode }
       </div>
 
       <textarea
-        className="flex-1 resize-none rounded-md border border-zinc-300 bg-zinc-50 p-3 font-mono text-xs text-zinc-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+        ref={textareaRef}
+        aria-invalid={!!error}
+        className="flex-1 resize-none rounded-md border border-zinc-300 bg-zinc-50 p-3 font-mono text-xs text-zinc-800 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 aria-[invalid=true]:border-red-300 aria-[invalid=true]:selection:bg-red-200"
         placeholder='{ "start": "Pending", "states": [...] }'
         value={input}
         onChange={e => setInput(e.target.value)}
@@ -82,9 +98,7 @@ export function JsmInput({ onToggleSidebar, onToggleFullscreen, fullscreenMode }
       />
 
       {error && (
-        <p className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-600">
-          {error}
-        </p>
+        <ErrorPanel error={error} issues={issues} onSelect={highlightIssue} />
       )}
 
       <div className="flex gap-2">
@@ -108,6 +122,67 @@ export function JsmInput({ onToggleSidebar, onToggleFullscreen, fullscreenMode }
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+const MAX_VISIBLE_ISSUES = 20;
+
+function ErrorPanel({
+  error,
+  issues,
+  onSelect,
+}: {
+  error: string;
+  issues: JsmIssue[];
+  onSelect: (issue: JsmIssue) => void;
+}) {
+  if (issues.length === 0) {
+    return (
+      <p className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-600 whitespace-pre-wrap">
+        {error}
+      </p>
+    );
+  }
+
+  const visible = issues.slice(0, MAX_VISIBLE_ISSUES);
+  const hidden = issues.length - visible.length;
+
+  return (
+    <div role="alert" className="rounded-md bg-red-50 border border-red-200 text-xs max-h-56 overflow-y-auto">
+      <div className="sticky top-0 bg-red-50 px-3 py-1.5 font-semibold text-red-700 border-b border-red-100">
+        {issues.length === 1 ? '1 problem' : `${issues.length} problems`} found
+      </div>
+      <ul className="divide-y divide-red-100">
+        {visible.map((issue, i) => {
+          const clickable = issue.start !== undefined;
+          return (
+            <li key={i}>
+              <button
+                type="button"
+                disabled={!clickable}
+                onClick={() => onSelect(issue)}
+                className="w-full text-left px-3 py-1.5 flex gap-2 items-start hover:bg-red-100/60 disabled:hover:bg-transparent disabled:cursor-default transition-colors"
+                title={clickable ? 'Show in editor' : undefined}
+              >
+                <span className="mt-px text-red-400" aria-hidden>●</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-red-700">{issue.message}</span>
+                  <span className="block text-red-400 truncate">{issue.location}</span>
+                </span>
+                {issue.line !== undefined && (
+                  <span className="shrink-0 font-mono text-[10px] text-red-500 bg-white/70 border border-red-200 rounded px-1">
+                    Ln {issue.line}:{issue.column}
+                  </span>
+                )}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {hidden > 0 && (
+        <div className="px-3 py-1.5 text-red-500 border-t border-red-100">…and {hidden} more</div>
+      )}
     </div>
   );
 }

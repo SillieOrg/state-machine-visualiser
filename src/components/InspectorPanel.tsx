@@ -2,7 +2,15 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '@/lib/store';
 import { EdgeHandleSelector } from '@/components/EdgeHandleSelector';
-import type { EntryAction } from '@/lib/jsm/schema';
+import { isEventAction, type EntryAction } from '@/lib/jsm/schema';
+import { getTransitionData } from '@/lib/jsm/parse';
+
+const inputClass =
+  'w-full text-xs text-zinc-800 border border-zinc-200 rounded px-2 py-1 focus:border-blue-400 focus:outline-none';
+
+function optional(value: string): string | undefined {
+  return value === '' ? undefined : value;
+}
 
 function EntryActionRow({
   action,
@@ -13,21 +21,77 @@ function EntryActionRow({
   onChange: (a: EntryAction) => void;
   onDelete: () => void;
 }) {
+  const isEvent = isEventAction(action);
+
+  function setKind(kind: 'action' | 'event') {
+    if (kind === (isEvent ? 'event' : 'action')) return;
+    onChange(
+      kind === 'event'
+        ? { ...(action.check !== undefined ? { check: action.check } : {}), event: action.action ?? '' }
+        : { ...(action.check !== undefined ? { check: action.check } : {}), action: action.event ?? '' },
+    );
+  }
+
   return (
-    <div className="flex gap-1.5 items-start">
+    <div
+      className={`flex gap-1.5 items-start rounded border-l-2 pl-2 ${
+        isEvent ? 'border-violet-400' : 'border-emerald-400'
+      }`}
+    >
       <div className="flex-1 flex flex-col gap-1">
+        <div className="flex gap-1 text-[10px] font-medium">
+          {(['action', 'event'] as const).map(kind => {
+            const active = kind === (isEvent ? 'event' : 'action');
+            return (
+              <button
+                key={kind}
+                onClick={() => setKind(kind)}
+                className={`rounded px-1.5 py-0.5 uppercase tracking-wide transition-colors ${
+                  active
+                    ? kind === 'event' ? 'bg-violet-100 text-violet-700' : 'bg-emerald-100 text-emerald-700'
+                    : 'text-zinc-400 hover:text-zinc-600'
+                }`}
+              >
+                {kind}
+              </button>
+            );
+          })}
+        </div>
         <input
-          className="w-full text-xs text-zinc-800 border border-zinc-200 rounded px-2 py-1 focus:border-blue-400 focus:outline-none"
-          placeholder="if condition…"
-          value={action.check}
-          onChange={e => onChange({ ...action, check: e.target.value })}
+          className={inputClass}
+          placeholder="if condition… (optional)"
+          value={action.check ?? ''}
+          onChange={e => onChange({ ...action, check: optional(e.target.value) })}
         />
-        <input
-          className="w-full text-xs text-zinc-800 border border-zinc-200 rounded px-2 py-1 focus:border-blue-400 focus:outline-none"
-          placeholder="then action…"
-          value={action.action}
-          onChange={e => onChange({ ...action, action: e.target.value })}
-        />
+        {isEvent ? (
+          <>
+            <input
+              className={inputClass}
+              placeholder="on event…"
+              value={action.event ?? ''}
+              onChange={e => onChange({ ...action, event: e.target.value })}
+            />
+            <input
+              className={inputClass}
+              placeholder="schema… (optional)"
+              value={action.schema ?? ''}
+              onChange={e => onChange({ ...action, schema: optional(e.target.value) })}
+            />
+            <input
+              className={inputClass}
+              placeholder="go to state… (optional)"
+              value={action.goTo ?? ''}
+              onChange={e => onChange({ ...action, goTo: optional(e.target.value) })}
+            />
+          </>
+        ) : (
+          <input
+            className={inputClass}
+            placeholder="then action…"
+            value={action.action ?? ''}
+            onChange={e => onChange({ ...action, action: e.target.value })}
+          />
+        )}
       </div>
       <button
         onClick={onDelete}
@@ -75,7 +139,7 @@ export function InspectorPanel() {
 
   function addEntryAction() {
     if (!selectedNode) return;
-    const actions = [...selectedNode.data.entryActions, { check: '', action: '' }];
+    const actions: EntryAction[] = [...selectedNode.data.entryActions, { action: '' }];
     updateEntryActions(selectedNode.id, actions);
   }
 
@@ -106,6 +170,7 @@ export function InspectorPanel() {
   if (selectedEdge) {
     const sourceNode = nodes.find(n => n.id === selectedEdge.source);
     const targetNode = nodes.find(n => n.id === selectedEdge.target);
+    const edgeData = getTransitionData(selectedEdge);
     return (
       <div className="flex flex-col gap-4 p-4">
         <div className="flex items-center justify-between">
@@ -124,15 +189,38 @@ export function InspectorPanel() {
           <span>→</span>
           <span className="font-medium text-zinc-700">{targetNode?.data.label ?? selectedEdge.target}</span>
         </div>
-        <div>
-          <label className="block text-xs text-zinc-500 mb-1">Condition</label>
-          <input
-            className="w-full text-xs text-zinc-800 border border-zinc-200 rounded px-2 py-1.5 focus:border-blue-400 focus:outline-none"
-            placeholder="condition…"
-            value={String(selectedEdge.label ?? '')}
-            onChange={e => updateEdgeLabel(selectedEdge.id, e.target.value)}
-          />
-        </div>
+        {edgeData?.kind === 'event' ? (
+          <div className="flex flex-col gap-2">
+            <span className="inline-flex w-fit items-center gap-1 rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
+              ⚡ Event transition
+            </span>
+            <div>
+              <label className="block text-xs text-zinc-500 mb-1">Event</label>
+              <input
+                className="w-full text-xs text-zinc-800 border border-zinc-200 rounded px-2 py-1.5 focus:border-violet-400 focus:outline-none"
+                placeholder="event…"
+                value={String(selectedEdge.label ?? '')}
+                onChange={e => updateEdgeLabel(selectedEdge.id, e.target.value)}
+              />
+            </div>
+            {edgeData.schema && (
+              <div className="text-xs text-zinc-500">
+                Schema: <span className="font-mono text-zinc-700 break-all">{edgeData.schema}</span>
+              </div>
+            )}
+            <p className="text-xs text-zinc-400">Edit the schema in the source state&apos;s entry actions.</p>
+          </div>
+        ) : (
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">Condition</label>
+            <input
+              className="w-full text-xs text-zinc-800 border border-zinc-200 rounded px-2 py-1.5 focus:border-blue-400 focus:outline-none"
+              placeholder="always (no check)"
+              value={String(selectedEdge.label ?? '')}
+              onChange={e => updateEdgeLabel(selectedEdge.id, e.target.value)}
+            />
+          </div>
+        )}
         <EdgeHandleSelector
           label="Attach from"
           type="source"
